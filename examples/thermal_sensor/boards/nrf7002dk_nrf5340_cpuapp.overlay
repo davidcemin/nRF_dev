@@ -1,0 +1,16 @@
+/ {
+    w1: onewire {
+        compatible = "zephyr,w1-gpio";
+        #address-cells = <2>;
+        #size-cells = <0>;
+        gpios = <&gpio0 26 (GPIO_OPEN_DRAIN | GPIO_PULL_UP)>;
+        label = "w1_thermo";
+        status = "okay";
+
+        ds18b20_0: sensor@28e975be0000009a {
+            compatible = "maxim,ds18b20";
+            reg = <0x28e975be 0x0000009a>;
+            resolution = <12>;
+        };
+    };
+};
