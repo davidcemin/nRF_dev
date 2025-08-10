@@ -84,10 +84,10 @@ BLE Client Usage
   4. The value is a signed 16-bit integer in 0.01 °C (divide by 100 to get °C).
 
 Example:
-```
+``
 Raw value: 0x0A47 (little-endian: 0x470A) = 2631
 Temperature: 26.31 °C
-```
+``
 
 License
 -------
