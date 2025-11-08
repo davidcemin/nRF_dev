@@ -1,7 +1,7 @@
 #pragma once
 
-#include "wifi_manager.hpp"
-#include "rtp_receiver.hpp"
+#include "../net/wifi_manager.hpp"
+#include "../net/rtp_receiver.hpp"
 
 /**
  * @brief Initialize shell commands for WiFi and RTP control

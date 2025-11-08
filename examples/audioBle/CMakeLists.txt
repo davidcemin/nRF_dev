@@ -21,12 +21,14 @@ target_include_directories(app PRIVATE
 # Source files
 target_sources(app PRIVATE
     src/main.cpp
-    src/wifi_manager.cpp
-    src/rtp_receiver.cpp
-    src/shell_commands.cpp
+    src/net/wifi_manager.cpp
+    src/net/rtp_receiver.cpp
+    src/cli/shell_commands.cpp
 )
 
 # Include directories
 target_include_directories(app PRIVATE
     src/
+    src/net/
+    src/cli/
 )

@@ -1,8 +1,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include "wifi_manager.hpp"
-#include "rtp_receiver.hpp"
-#include "shell_commands.hpp"
+#include "net/wifi_manager.hpp"
+#include "net/rtp_receiver.hpp"
+#include "cli/shell_commands.hpp"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
