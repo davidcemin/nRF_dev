@@ -3,6 +3,7 @@
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/net/net_event.h>
 #include <zephyr/net/socket.h>
+#include <zephyr/posix/arpa/inet.h>
 #include <cstring>
 
 LOG_MODULE_REGISTER(wifi_manager, LOG_LEVEL_DBG);
@@ -35,7 +36,7 @@ static void ipv4_event_handler(struct net_mgmt_event_callback *cb,
         char addr_str[NET_IPV4_ADDR_LEN];
         
         if (iface->config.ip.ipv4) {
-            const struct in_addr *addr = &iface->config.ip.ipv4->unicast[0].address.in_addr;
+            const struct in_addr *addr = (const struct in_addr*)&iface->config.ip.ipv4->unicast[0].ipv4;
             inet_ntop(AF_INET, addr, addr_str, sizeof(addr_str));
             LOG_INF("IPv4 address obtained: %s", addr_str);
             k_sem_give(&ipv4_obtained_sem);
@@ -46,30 +47,37 @@ static void ipv4_event_handler(struct net_mgmt_event_callback *cb,
 static struct net_mgmt_event_callback wifi_cb;
 static struct net_mgmt_event_callback ipv4_cb;
 
-int WiFiManager::connect()
+int WiFiManager::connect(const std::string& ssid, const std::string& password)
 {
+    m_ssid = ssid;
+    m_password = password;
+    
     m_iface = net_if_get_default();
     if (!m_iface) {
         LOG_ERR("No default network interface found");
         return -ENODEV;
     }
 
-    // Setup event callbacks
-    net_mgmt_init_event_callback(&wifi_cb, wifi_event_handler,
-                                 NET_EVENT_WIFI_CONNECT_RESULT |
-                                 NET_EVENT_WIFI_DISCONNECT_RESULT);
-    net_mgmt_add_event_callback(&wifi_cb);
+    // Setup event callbacks (only once)
+    static bool callbacks_initialized = false;
+    if (!callbacks_initialized) {
+        net_mgmt_init_event_callback(&wifi_cb, wifi_event_handler,
+                                     NET_EVENT_WIFI_CONNECT_RESULT |
+                                     NET_EVENT_WIFI_DISCONNECT_RESULT);
+        net_mgmt_add_event_callback(&wifi_cb);
 
-    net_mgmt_init_event_callback(&ipv4_cb, ipv4_event_handler,
-                                 NET_EVENT_IPV4_ADDR_ADD);
-    net_mgmt_add_event_callback(&ipv4_cb);
+        net_mgmt_init_event_callback(&ipv4_cb, ipv4_event_handler,
+                                     NET_EVENT_IPV4_ADDR_ADD);
+        net_mgmt_add_event_callback(&ipv4_cb);
+        callbacks_initialized = true;
+    }
 
     // Configure WiFi parameters
     struct wifi_connect_req_params params = {0};
-    params.ssid = CONFIG_WIFI_SSID;
-    params.ssid_length = strlen(CONFIG_WIFI_SSID);
-    params.psk = CONFIG_WIFI_PSK;
-    params.psk_length = strlen(CONFIG_WIFI_PSK);
+    params.ssid = reinterpret_cast<const uint8_t*>(m_ssid.c_str());
+    params.ssid_length = m_ssid.length();
+    params.psk = reinterpret_cast<const uint8_t*>(m_password.c_str());
+    params.psk_length = m_password.length();
     params.channel = WIFI_CHANNEL_ANY;
     params.security = WIFI_SECURITY_TYPE_PSK;
     params.band = WIFI_FREQ_BAND_2_4_GHZ;
@@ -102,18 +110,34 @@ int WiFiManager::connect()
     return 0;
 }
 
+void WiFiManager::disconnect()
+{
+    if (!m_iface || !m_connected) {
+        return;
+    }
+
+    int ret = net_mgmt(NET_REQUEST_WIFI_DISCONNECT, m_iface, NULL, 0);
+    if (ret) {
+        LOG_ERR("WiFi disconnect request failed: %d", ret);
+    }
+    
+    m_connected = false;
+}
+
 bool WiFiManager::isConnected() const
 {
     return m_connected;
 }
 
-int WiFiManager::getIpAddress(char* buffer, size_t size) const
+std::string WiFiManager::getIpAddress() const
 {
     if (!m_iface || !m_iface->config.ip.ipv4) {
-        return -EINVAL;
+        return "";
     }
 
-    const struct in_addr *addr = &m_iface->config.ip.ipv4->unicast[0].address.in_addr;
-    inet_ntop(AF_INET, addr, buffer, size);
-    return 0;
+    std::array<char, NET_IPV4_ADDR_LEN> addr_str;
+    const struct in_addr *addr = (const struct in_addr*)&m_iface->config.ip.ipv4->unicast[0].ipv4;
+    inet_ntop(AF_INET, addr, addr_str.data(), addr_str.size());
+    
+    return std::string(addr_str.data());
 }

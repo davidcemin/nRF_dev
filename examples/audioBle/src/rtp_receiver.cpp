@@ -1,7 +1,9 @@
 #include "rtp_receiver.hpp"
 #include <zephyr/logging/log.h>
 #include <zephyr/net/socket.h>
-#include <arpa/inet.h>
+#include <zephyr/posix/arpa/inet.h>
+#include <zephyr/posix/unistd.h>
+#include <zephyr/posix/fcntl.h>
 
 LOG_MODULE_REGISTER(rtp_receiver, LOG_LEVEL_DBG);
 
@@ -117,12 +119,19 @@ void RtpReceiver::receiverThread(void* arg1, void* arg2, void* arg3)
     LOG_INF("RTP receiver thread stopped");
 }
 
+RtpReceiver::~RtpReceiver()
+{
+    stop();
+}
+
 int RtpReceiver::start(uint16_t port)
 {
     if (m_running) {
         LOG_WRN("RTP receiver already running");
         return -EALREADY;
     }
+
+    m_port = port;
 
     // Create UDP socket
     m_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);

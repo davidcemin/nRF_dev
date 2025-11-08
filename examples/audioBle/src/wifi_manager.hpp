@@ -2,6 +2,8 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/net/net_if.h>
+#include <string>
+#include <array>
 
 class WiFiManager {
 public:
@@ -10,9 +12,16 @@ public:
 
     /**
      * @brief Initialize and connect to WiFi network
+     * @param ssid Network SSID
+     * @param password Network password
      * @return 0 on success, negative error code on failure
      */
-    int connect();
+    int connect(const std::string& ssid, const std::string& password);
+
+    /**
+     * @brief Disconnect from WiFi
+     */
+    void disconnect();
 
     /**
      * @brief Check if WiFi is connected
@@ -22,13 +31,13 @@ public:
 
     /**
      * @brief Get the current IP address
-     * @param buffer Buffer to store IP address string
-     * @param size Size of buffer
-     * @return 0 on success, negative error code on failure
+     * @return IP address as string, empty if not connected
      */
-    int getIpAddress(char* buffer, size_t size) const;
+    std::string getIpAddress() const;
 
 private:
     bool m_connected = false;
     struct net_if* m_iface = nullptr;
+    std::string m_ssid;
+    std::string m_password;
 };

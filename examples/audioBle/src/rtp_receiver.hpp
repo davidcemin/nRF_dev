@@ -3,6 +3,7 @@
 #include <zephyr/kernel.h>
 #include <cstdint>
 #include <cstddef>
+#include <array>
 
 // RTP Header structure (RFC 3550)
 struct RtpHeader {
@@ -16,7 +17,7 @@ struct RtpHeader {
 class RtpReceiver {
 public:
     RtpReceiver() = default;
-    ~RtpReceiver() = default;
+    ~RtpReceiver();
 
     /**
      * @brief Start UDP server to receive RTP packets
@@ -35,13 +36,18 @@ public:
      */
     bool isRunning() const { return m_running; }
 
+    /**
+     * @brief Get current port number
+     */
+    uint16_t getPort() const { return m_port; }
+
 private:
     /**
      * @brief Parse RTP packet and extract payload
-     * @param packet Raw packet data
+     * @param packet Raw packet data (const reference for input)
      * @param length Packet length
-     * @param payload Output pointer to payload data
-     * @param payloadLen Output payload length
+     * @param payload Output pointer to payload data (pointer OK for output param)
+     * @param payloadLen Output payload length (pointer OK for output param)
      * @return 0 on success, negative error code on failure
      */
     int parseRtpPacket(const uint8_t* packet, size_t length,
@@ -54,5 +60,6 @@ private:
 
     int m_socket = -1;
     bool m_running = false;
+    uint16_t m_port = 0;
     k_tid_t m_thread_id = nullptr;
 };
