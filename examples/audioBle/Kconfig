@@ -1,0 +1,25 @@
+mainmenu "WiFi RTP Receiver Configuration"
+
+source "Kconfig.zephyr"
+
+menu "WiFi RTP Receiver Settings"
+
+config WIFI_SSID
+	string "WiFi SSID"
+	default "MyNetwork"
+	help
+	  WiFi network name to connect to
+
+config WIFI_PSK
+	string "WiFi Password"
+	default "MyPassword"
+	help
+	  WiFi network password
+
+config RTP_UDP_PORT
+	int "UDP Port for RTP Audio"
+	default 5004
+	help
+	  UDP port to listen for incoming RTP audio packets
+
+endmenu
