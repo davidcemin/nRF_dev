@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-RTP Audio Streamer for macOS
-Streams audio file (MP3, WAV, etc.) over RTP/UDP to nRF7002-DK
+RTP Audio Server for macOS
+Acts as RTP server that streams audio to connected nRF7002-DK client
 
 Requirements:
     pip install pydub
 
 Usage:
-    python3 stream_audio.py <audio_file> <target_ip> [port]
+    python3 stream_audio.py <audio_file> [port]
     
 Example:
-    python3 stream_audio.py song.mp3 192.168.1.100 5004
+    python3 stream_audio.py song.mp3 5004
+    
+Then on nRF7002-DK:
+    uart:~$ wifi connect -s <ssid> -p <password> -k 1
+    uart:~$ rtp start <this_computer_ip> 5004
 """
 
 import sys
@@ -27,16 +31,15 @@ except ImportError:
     sys.exit(1)
 
 
-class RtpStreamer:
-    """Simple RTP audio streamer"""
+class RtpServer:
+    """RTP audio server - waits for client connection and streams audio"""
     
     # RTP payload type for raw PCM audio
     PAYLOAD_TYPE_PCMU = 0  # G.711 μ-law
     PAYLOAD_TYPE_L16 = 11  # Linear PCM 16-bit, 44.1kHz
     
-    def __init__(self, target_ip, target_port=5004, sample_rate=48000):
-        self.target_ip = target_ip
-        self.target_port = target_port
+    def __init__(self, port=5004, sample_rate=48000):
+        self.port = port
         self.sample_rate = sample_rate
         
         # RTP state
@@ -44,8 +47,53 @@ class RtpStreamer:
         self.timestamp = 0
         self.ssrc = 0x12345678  # Random source identifier
         
-        # Create UDP socket
+        # Create UDP socket and bind to port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(('0.0.0.0', port))
+        
+        # Client address (will be set when client connects)
+        self.client_addr = None
+        
+        print(f"RTP Server started on port {port}")
+        print(f"Waiting for client connection...")
+        print(f"Server IPs:")
+        self._print_local_ips()
+        print("")
+    
+    def _print_local_ips(self):
+        """Print all local IP addresses"""
+        import socket as sock
+        hostname = sock.gethostname()
+        try:
+            # Get all IP addresses
+            ips = sock.getaddrinfo(hostname, None)
+            seen = set()
+            for ip in ips:
+                addr = ip[4][0]
+                # Filter out IPv6 and localhost
+                if ':' not in addr and addr != '127.0.0.1' and addr not in seen:
+                    print(f"  {addr}")
+                    seen.add(addr)
+        except:
+            print("  Unable to determine IP address")
+    
+    def wait_for_client(self, timeout=30):
+        """Wait for client to connect (send first packet)"""
+        print(f"Waiting up to {timeout}s for client to connect...")
+        self.socket.settimeout(timeout)
+        
+        try:
+            # Wait for any packet from client
+            data, addr = self.socket.recvfrom(1024)
+            self.client_addr = addr
+            print(f"Client connected from {addr[0]}:{addr[1]}")
+            
+            # Set socket back to non-blocking for streaming
+            self.socket.settimeout(None)
+            return True
+        except socket.timeout:
+            print("Timeout waiting for client connection")
+            return False
         
     def create_rtp_header(self, marker=False):
         """Create RTP header (12 bytes)"""
@@ -70,11 +118,14 @@ class RtpStreamer:
         return header
     
     def send_rtp_packet(self, audio_data, marker=False):
-        """Send one RTP packet"""
+        """Send one RTP packet to connected client"""
+        if not self.client_addr:
+            return
+            
         header = self.create_rtp_header(marker)
         packet = header + audio_data
         
-        self.socket.sendto(packet, (self.target_ip, self.target_port))
+        self.socket.sendto(packet, self.client_addr)
         
         # Update sequence number (wraps at 65535)
         self.sequence_number = (self.sequence_number + 1) & 0xFFFF
@@ -102,7 +153,14 @@ class RtpStreamer:
         print(f"  Channels: {audio.channels}")
         print(f"  Sample width: {audio.sample_width * 8} bits")
         print(f"  Duration: {len(audio) / 1000:.2f} seconds")
-        print(f"\nStreaming to {self.target_ip}:{self.target_port}")
+        
+        if not self.client_addr:
+            print("\nWaiting for client to connect...")
+            if not self.wait_for_client():
+                print("No client connected. Exiting.")
+                return
+        
+        print(f"\nStreaming to client: {self.client_addr[0]}:{self.client_addr[1]}")
         print("Press Ctrl+C to stop\n")
         
         # Get raw audio data
@@ -162,22 +220,24 @@ class RtpStreamer:
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: python3 stream_audio.py <audio_file> <target_ip> [port]")
+    if len(sys.argv) < 2:
+        print("Usage: python3 stream_audio.py <audio_file> [port]")
         print("\nExample:")
-        print("  python3 stream_audio.py music.mp3 192.168.1.100 5004")
+        print("  python3 stream_audio.py music.mp3 5004")
+        print("\nThen on nRF7002-DK:")
+        print("  uart:~$ wifi connect -s <ssid> -p <password> -k 1")
+        print("  uart:~$ rtp start <this_computer_ip> 5004")
         sys.exit(1)
     
     audio_file = sys.argv[1]
-    target_ip = sys.argv[2]
-    target_port = int(sys.argv[3]) if len(sys.argv) > 3 else 5004
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else 5004
     
     if not Path(audio_file).exists():
         print(f"Error: Audio file not found: {audio_file}")
         sys.exit(1)
     
-    streamer = RtpStreamer(target_ip, target_port)
-    streamer.stream_audio(audio_file)
+    server = RtpServer(port)
+    server.stream_audio(audio_file)
 
 
 if __name__ == "__main__":
