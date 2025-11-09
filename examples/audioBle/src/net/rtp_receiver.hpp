@@ -20,11 +20,12 @@ public:
     ~RtpReceiver();
 
     /**
-     * @brief Start UDP server to receive RTP packets
-     * @param port UDP port to listen on
+     * @brief Connect to RTP server and start receiving packets
+     * @param server_ip Server IP address (e.g., "192.168.1.100")
+     * @param server_port Server UDP port
      * @return 0 on success, negative error code on failure
      */
-    int start(uint16_t port);
+    int start(const char* server_ip, uint16_t server_port);
 
     /**
      * @brief Stop the RTP receiver
@@ -37,9 +38,10 @@ public:
     bool isRunning() const { return m_running; }
 
     /**
-     * @brief Get current port number
+     * @brief Get server address and port
      */
-    uint16_t getPort() const { return m_port; }
+    const char* getServerIp() const { return m_server_ip; }
+    uint16_t getServerPort() const { return m_server_port; }
 
 private:
     /**
@@ -60,6 +62,7 @@ private:
 
     int m_socket = -1;
     bool m_running = false;
-    uint16_t m_port = 0;
+    char m_server_ip[16] = {0};  // IPv4 address string
+    uint16_t m_server_port = 0;
     k_tid_t m_thread_id = nullptr;
 };

@@ -79,36 +79,28 @@ void RtpReceiver::receiverThread(void* arg1, void* arg2, void* arg3)
     RtpReceiver* receiver = static_cast<RtpReceiver*>(arg1);
     uint8_t buffer[RTP_BUFFER_SIZE];
     
-    LOG_INF("RTP receiver thread started");
+    LOG_INF("RTP receiver thread started, connected to %s:%u", 
+            receiver->m_server_ip, receiver->m_server_port);
 
     while (receiver->m_running) {
-        struct sockaddr_in client_addr;
-        socklen_t client_addr_len = sizeof(client_addr);
-
-        ssize_t len = recvfrom(receiver->m_socket, buffer, sizeof(buffer), 0,
-                               (struct sockaddr*)&client_addr, &client_addr_len);
+        ssize_t len = recv(receiver->m_socket, buffer, sizeof(buffer), 0);
 
         if (len < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 k_sleep(K_MSEC(10));
                 continue;
             }
-            LOG_ERR("recvfrom error: %d", errno);
+            LOG_ERR("recv error: %d", errno);
             k_sleep(K_MSEC(100));
             continue;
         }
 
         if (len > 0) {
-            // Log sender info on first packet or periodically
-            char addr_str[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &client_addr.sin_addr, addr_str, sizeof(addr_str));
-            
             const uint8_t* payload;
             size_t payloadLen;
             
             if (receiver->parseRtpPacket(buffer, len, &payload, &payloadLen) == 0) {
-                LOG_INF("Received RTP from %s:%u - %u bytes payload",
-                        addr_str, ntohs(client_addr.sin_port), payloadLen);
+                LOG_INF("Received RTP packet - %u bytes payload", payloadLen);
                 
                 // Here you would forward the payload to audio processing
                 // For now, just log it
@@ -124,14 +116,21 @@ RtpReceiver::~RtpReceiver()
     stop();
 }
 
-int RtpReceiver::start(uint16_t port)
+int RtpReceiver::start(const char* server_ip, uint16_t server_port)
 {
     if (m_running) {
         LOG_WRN("RTP receiver already running");
         return -EALREADY;
     }
 
-    m_port = port;
+    if (!server_ip || server_port == 0) {
+        LOG_ERR("Invalid server address or port");
+        return -EINVAL;
+    }
+
+    // Store server info
+    strncpy(m_server_ip, server_ip, sizeof(m_server_ip) - 1);
+    m_server_port = server_port;
 
     // Create UDP socket
     m_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -144,21 +143,27 @@ int RtpReceiver::start(uint16_t port)
     int flags = fcntl(m_socket, F_GETFL, 0);
     fcntl(m_socket, F_SETFL, flags | O_NONBLOCK);
 
-    // Bind to port
+    // Connect to server (for UDP, this filters packets to only this source)
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(port);
+    server_addr.sin_port = htons(server_port);
+    
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        LOG_ERR("Invalid IP address: %s", server_ip);
+        close(m_socket);
+        m_socket = -1;
+        return -EINVAL;
+    }
 
-    if (bind(m_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        LOG_ERR("Failed to bind socket to port %u: %d", port, errno);
+    if (connect(m_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        LOG_ERR("Failed to connect to %s:%u: %d", server_ip, server_port, errno);
         close(m_socket);
         m_socket = -1;
         return -errno;
     }
 
-    LOG_INF("UDP socket bound to port %u", port);
+    LOG_INF("Connected to RTP server %s:%u", server_ip, server_port);
 
     // Start receiver thread
     m_running = true;
@@ -170,7 +175,7 @@ int RtpReceiver::start(uint16_t port)
 
     k_thread_name_set(m_thread_id, "rtp_receiver");
 
-    LOG_INF("RTP receiver started on port %u", port);
+    LOG_INF("RTP receiver started");
     return 0;
 }
 

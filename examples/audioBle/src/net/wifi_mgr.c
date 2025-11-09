@@ -44,7 +44,7 @@ static void handle_ipv4_result(struct net_mgmt_event_callback *cb,
         char buf[NET_IPV4_ADDR_LEN];
         
         for (int i = 0; i < NET_IF_MAX_IPV4_ADDR; i++) {
-            struct net_if_addr *if_addr = &iface->config.ip.ipv4->unicast[i];
+            struct net_if_addr *if_addr = (struct net_if_addr*)&iface->config.ip.ipv4->unicast[i];
             
             if (if_addr->addr_type == NET_ADDR_DHCP && if_addr->is_used) {
                 net_addr_ntop(AF_INET, &if_addr->address.in_addr, buf, sizeof(buf));
@@ -149,7 +149,7 @@ int wifi_mgr_get_ip(char *buf, size_t buflen)
     }
 
     for (int i = 0; i < NET_IF_MAX_IPV4_ADDR; i++) {
-        struct net_if_addr *if_addr = &iface->config.ip.ipv4->unicast[i];
+        struct net_if_addr *if_addr = (struct net_if_addr*)&iface->config.ip.ipv4->unicast[i];
         
         if (if_addr->addr_type == NET_ADDR_DHCP && if_addr->is_used) {
             return net_addr_ntop(AF_INET, &if_addr->address.in_addr, buf, buflen) ? 0 : -EINVAL;

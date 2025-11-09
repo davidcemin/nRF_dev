@@ -46,7 +46,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
     }
     
     if (g_rtp && g_rtp->isRunning()) {
-        shell_print(sh, "RTP: Running on port %u", g_rtp->getPort());
+        shell_print(sh, "RTP: Connected to %s:%u", g_rtp->getServerIp(), g_rtp->getServerPort());
     } else {
         shell_print(sh, "RTP: Stopped");
     }
@@ -65,13 +65,11 @@ static int cmd_rtp_start(const struct shell *sh, size_t argc, char **argv)
     // Check if WiFi is connected by looking at network interface
     struct net_if *iface = net_if_get_default();
     bool has_ip = false;
-    char ip[NET_IPV4_ADDR_LEN] = {0};
     
     if (iface && net_if_is_up(iface)) {
         for (int i = 0; i < NET_IF_MAX_IPV4_ADDR; i++) {
             struct net_if_addr_ipv4 *if_addr = &iface->config.ip.ipv4->unicast[i];
             if (if_addr->ipv4.is_used) {
-                net_addr_ntop(AF_INET, &if_addr->ipv4.address.in_addr, ip, sizeof(ip));
                 has_ip = true;
                 break;
             }
@@ -83,31 +81,37 @@ static int cmd_rtp_start(const struct shell *sh, size_t argc, char **argv)
         return -ENOTCONN;
     }
 
-    uint16_t port = CONFIG_RTP_UDP_PORT;
-    
-    // Optional port argument
-    if (argc > 1) {
-        port = static_cast<uint16_t>(atoi(argv[1]));
+    // Require server IP and port arguments
+    if (argc < 3) {
+        shell_error(sh, "Usage: rtp start <server_ip> <port>");
+        shell_print(sh, "Example: rtp start 192.168.86.100 5004");
+        return -EINVAL;
+    }
+
+    const char* server_ip = argv[1];
+    uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
+
+    if (port == 0) {
+        shell_error(sh, "Invalid port number");
+        return -EINVAL;
     }
 
     if (g_rtp->isRunning()) {
-        shell_warn(sh, "RTP receiver already running on port %u", g_rtp->getPort());
+        shell_warn(sh, "RTP receiver already running (connected to %s:%u)", 
+                   g_rtp->getServerIp(), g_rtp->getServerPort());
         return 0;
     }
 
-    shell_print(sh, "Starting RTP receiver on port %u...", port);
+    shell_print(sh, "Connecting to RTP server %s:%u...", server_ip, port);
     
-    int ret = g_rtp->start(port);
+    int ret = g_rtp->start(server_ip, port);
     if (ret < 0) {
-        shell_error(sh, "Failed to start RTP receiver: %d", ret);
+        shell_error(sh, "Failed to connect to RTP server: %d", ret);
         return ret;
     }
     
     shell_print(sh, "RTP receiver started!");
-    shell_print(sh, "Listening on: %s:%u", ip, port);
-    shell_print(sh, "");
-    shell_print(sh, "Stream audio with:");
-    shell_print(sh, "  python3 stream_audio.py song.mp3 %s %u", ip, port);
+    shell_print(sh, "Connected to: %s:%u", server_ip, port);
     
     return 0;
 }
@@ -142,12 +146,7 @@ static int cmd_rtp_status(const struct shell *sh, size_t argc, char **argv)
 
     if (g_rtp->isRunning()) {
         shell_print(sh, "RTP Receiver: Running");
-        shell_print(sh, "Port: %u", g_rtp->getPort());
-        if (wifi_mgr_is_connected()) {
-            char ip[16];
-            wifi_mgr_get_ip(ip, sizeof(ip));
-            shell_print(sh, "Address: %s:%u", ip, g_rtp->getPort());
-        }
+        shell_print(sh, "Connected to: %s:%u", g_rtp->getServerIp(), g_rtp->getServerPort());
     } else {
         shell_print(sh, "RTP Receiver: Stopped");
     }
@@ -188,10 +187,11 @@ static int cmd_test_print(const struct shell *sh, size_t argc, char **argv)
 // Define RTP subcommands
 SHELL_STATIC_SUBCMD_SET_CREATE(rtp_cmds,
     SHELL_CMD_ARG(start, NULL, 
-                  "Start RTP receiver\n"
-                  "Usage: rtp start [port]\n"
-                  "  port - UDP port (default: 5004)", 
-                  cmd_rtp_start, 1, 1),
+                  "Connect to RTP server and start receiving\n"
+                  "Usage: rtp start <server_ip> <port>\n"
+                  "  server_ip - Server IP address (e.g., 192.168.86.100)\n"
+                  "  port - Server UDP port (e.g., 5004)", 
+                  cmd_rtp_start, 3, 0),
     SHELL_CMD_ARG(stop, NULL, 
                   "Stop RTP receiver", 
                   cmd_rtp_stop, 1, 0),
