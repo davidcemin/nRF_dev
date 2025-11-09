@@ -1,7 +1,10 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/printk.h>
-#include "net/wifi_manager.hpp"
+#include <zephyr/device.h>
+#include <zephyr/net/net_config.h>
+#include <zephyr/net/net_if.h>
+#include "net/wifi_mgr.h"
 #include "net/rtp_receiver.hpp"
 #include "cli/shell_commands.hpp"
 
@@ -54,22 +57,52 @@ int main(void)
     
     printk("\n");
     LOG_INF("Use shell commands to control:");
-    LOG_INF("  wifi connect <ssid> <password>  - Connect to WiFi");
-    LOG_INF("  wifi status                     - Show WiFi status");
-    LOG_INF("  rtp start [port]                - Start RTP receiver");
-    LOG_INF("  rtp status                      - Show RTP status");
+    LOG_INF("  wifi connect -s <ssid> -p <password>  - Connect to WiFi");
+    LOG_INF("  wifi scan                             - Scan for networks");
+    LOG_INF("  wifi disconnect                       - Disconnect");
+    LOG_INF("  rtp start [port]                      - Start RTP receiver");
+    LOG_INF("  rtp status                            - Show RTP status");
     LOG_INF("");
 
-    printk("About to create WiFiManager instance...\n");
-    
-    // Create manager instances - use heap to avoid stack issues
-    printk("Allocating WiFiManager...\n");
-    static WiFiManager* wifi = nullptr;
-    wifi = new WiFiManager();
-    printk("WiFiManager created successfully at %p\n", wifi);
-    
-    LOG_INF("WiFiManager created successfully");
-    
+    // Initialize network stack - CRITICAL for WiFi to work!
+    printk("Initializing network configuration...\n");
+#ifdef CONFIG_NET_CONFIG_SETTINGS
+    const struct device *dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_wifi));
+    if (device_is_ready(dev)) {
+        struct net_if *wifi_iface = net_if_lookup_by_dev(dev);
+        if (wifi_iface) {
+            // Set WiFi as default interface
+            net_if_set_default(wifi_iface);
+            LOG_INF("WiFi interface set as default");
+            
+            // Initialize network config (starts DHCP, etc.)
+            net_config_init_app(dev, "Initializing network");
+            LOG_INF("Network configuration initialized");
+            
+            // Explicitly bring up the WiFi interface
+            if (!net_if_is_up(wifi_iface)) {
+                LOG_INF("Bringing up WiFi interface...");
+                net_if_up(wifi_iface);
+                k_sleep(K_SECONDS(1));
+                
+                if (net_if_is_up(wifi_iface)) {
+                    LOG_INF("WiFi interface is now UP");
+                } else {
+                    LOG_ERR("Failed to bring up WiFi interface!");
+                }
+            } else {
+                LOG_INF("WiFi interface already UP");
+            }
+        } else {
+            LOG_ERR("Failed to get WiFi network interface!");
+        }
+    } else {
+        LOG_ERR("WiFi device not ready!");
+    }
+#else
+    LOG_WRN("CONFIG_NET_CONFIG_SETTINGS not enabled - network may not work properly");
+#endif
+
     printk("About to create RtpReceiver instance...\n");
     static RtpReceiver* rtpReceiver = nullptr;
     rtpReceiver = new RtpReceiver();
@@ -79,33 +112,13 @@ int main(void)
 
     // Initialize shell commands
     printk("Initializing shell commands...\n");
-    shell_init(*wifi, *rtpReceiver);
+    shell_init(*rtpReceiver);
     printk("Shell commands initialized\n");
     LOG_INF("Shell commands initialized");
 
     printk("Ready! Type 'help' for available commands\n\n");
     LOG_INF("Ready! Type 'help' for available commands");
     LOG_INF("");
-
-    // Auto-connect if credentials are configured
-    if (strlen(CONFIG_WIFI_SSID) > 0 && 
-        strcmp(CONFIG_WIFI_SSID, "MyNetwork") != 0) {
-        
-        LOG_INF("Auto-connecting to configured WiFi...");
-        int ret = wifi->connect(CONFIG_WIFI_SSID, CONFIG_WIFI_PSK);
-        
-        if (ret == 0) {
-            LOG_INF("WiFi connected: %s", wifi->getIpAddress().c_str());
-            LOG_INF("Starting RTP receiver on port %d...", CONFIG_RTP_UDP_PORT);
-            
-            ret = rtpReceiver->start(CONFIG_RTP_UDP_PORT);
-            if (ret == 0) {
-                LOG_INF("RTP receiver started!");
-                LOG_INF("Send audio to: %s:%d", 
-                       wifi->getIpAddress().c_str(), CONFIG_RTP_UDP_PORT);
-            }
-        }
-    }
 
     printk("Entering main loop...\n");
     // Main loop - shell handles commands

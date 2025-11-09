@@ -10,6 +10,16 @@
 
 LOG_MODULE_REGISTER(wifi_manager, LOG_LEVEL_DBG);
 
+// C wrapper for net_mgmt to avoid C++ linkage issues
+extern "C" {
+static int wifi_mgmt_connect(struct net_if *iface, 
+                             struct wifi_connect_req_params *params)
+{
+    return net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, 
+                   params, sizeof(struct wifi_connect_req_params));
+}
+}
+
 static K_SEM_DEFINE(wifi_connected_sem, 0, 1);
 static K_SEM_DEFINE(ipv4_obtained_sem, 0, 1);
 
@@ -59,34 +69,38 @@ int WiFiManager::connect(const std::string& ssid, const std::string& password)
     m_ssid = ssid;
     m_password = password;
     
-    LOG_INF("Attempting to get default network interface...");
-    // Wait for network interface to be available
-    m_iface = net_if_get_default();
+    LOG_INF("Attempting to get WiFi station interface...");
+    // Get WiFi STA interface (this is what Nordic's sample uses)
+    m_iface = net_if_get_wifi_sta();
     int retry = 0;
     while (!m_iface && retry < 10) {
-        LOG_WRN("Waiting for network interface... (attempt %d)", retry + 1);
+        LOG_WRN("Waiting for WiFi interface... (attempt %d)", retry + 1);
         k_sleep(K_MSEC(500));
-        m_iface = net_if_get_default();
+        m_iface = net_if_get_wifi_sta();
         retry++;
     }
     
     if (!m_iface) {
-        LOG_ERR("No default network interface found after %d attempts", retry);
+        LOG_ERR("No WiFi station interface found after %d attempts", retry);
         LOG_ERR("This means the WiFi driver did NOT initialize!");
         LOG_ERR("Check if CONFIG_WIFI_NRF70=y in build/.config");
         return -ENODEV;
     }
 
-    LOG_INF("Network interface found: %p", m_iface);
+    LOG_INF("WiFi station interface found: %p", m_iface);
     
-    // Bring up the network interface if it's not already up
+    // Ensure interface is up
     if (!net_if_is_up(m_iface)) {
-        LOG_INF("Bringing up network interface...");
+        LOG_INF("Bringing up WiFi interface for connection...");
         net_if_up(m_iface);
-        k_sleep(K_MSEC(100));
+        // Wait longer for WPA supplicant and driver to be ready
+        LOG_INF("Waiting for WiFi subsystem to initialize...");
+        k_sleep(K_SECONDS(3));
+    } else {
+        LOG_INF("WiFi interface is already UP");
     }
-
-    LOG_INF("Network interface ready");
+    
+    LOG_INF("WiFi interface ready for connection");
 
     // Setup event callbacks (only once)
     static bool callbacks_initialized = false;
@@ -102,90 +116,23 @@ int WiFiManager::connect(const std::string& ssid, const std::string& password)
         callbacks_initialized = true;
     }
 
-    // Configure WiFi parameters
-    struct wifi_connect_req_params params = {0};
+    // Configure WiFi parameters (exactly like Nordic's sample)
+    struct wifi_connect_req_params params = {0};  // Zero-initialize
     params.ssid = reinterpret_cast<const uint8_t*>(m_ssid.c_str());
     params.ssid_length = m_ssid.length();
     params.psk = reinterpret_cast<const uint8_t*>(m_password.c_str());
     params.psk_length = m_password.length();
     params.channel = WIFI_CHANNEL_ANY;
     params.security = WIFI_SECURITY_TYPE_PSK;
-    params.band = WIFI_FREQ_BAND_2_4_GHZ;
+    params.band = WIFI_FREQ_BAND_UNKNOWN;  // Auto-select band
     params.mfp = WIFI_MFP_OPTIONAL;
+    params.timeout = SYS_FOREVER_MS;  // Wait indefinitely
 
-    LOG_INF("Connecting to WiFi SSID: %s", params.ssid);
-    LOG_INF("WiFi params: ssid_len=%d, psk_len=%d, security=%d, band=%d, channel=%d",
-            params.ssid_length, params.psk_length, params.security, params.band, params.channel);
-    LOG_INF("Interface pointer: %p", m_iface);
-    LOG_INF("Interface index: %d", net_if_get_by_iface(m_iface));
+    LOG_INF("Connecting to SSID: %s (len=%d, security=%d)", 
+            m_ssid.c_str(), params.ssid_length, params.security);
     
-    // Check if interface supports WiFi
-    if (!net_if_l2(m_iface)) {
-        LOG_ERR("Interface has no L2 layer!");
-    } else {
-        LOG_INF("Interface L2: %p", net_if_l2(m_iface));
-    }
-    
-    // Get WiFi interface specifically
-    struct net_if *wifi_iface = NULL;
-    int iface_count = 0;
-    
-    // Iterate through all interfaces to find WiFi
-    for (int i = 1; i <= 10; i++) {
-        struct net_if *iface = net_if_get_by_index(i);
-        if (!iface) continue;
-        
-        iface_count++;
-        LOG_INF("Found interface %d at %p", i, iface);
-        
-        // Check if this is a WiFi interface by trying to get capabilities
-        struct wifi_iface_status status = {0};
-        int ret = net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, iface, 
-                          &status, sizeof(status));
-        if (ret == 0) {
-            LOG_INF("  -> This is a WiFi interface! State: %d", status.state);
-            wifi_iface = iface;
-            break;
-        } else {
-            LOG_INF("  -> Not WiFi or not ready (ret=%d)", ret);
-        }
-    }
-    
-    if (wifi_iface && wifi_iface != m_iface) {
-        LOG_WRN("Default interface is NOT WiFi! Using interface %p instead", wifi_iface);
-        m_iface = wifi_iface;
-        
-        // Bring up the WiFi interface
-        if (!net_if_is_up(m_iface)) {
-            LOG_INF("Bringing up WiFi interface...");
-            net_if_up(m_iface);
-            k_sleep(K_MSEC(100));
-        }
-    } else if (!wifi_iface) {
-        LOG_ERR("No WiFi interface found among %d interfaces!", iface_count);
-        LOG_ERR("WiFi driver is compiled but no WiFi device registered!");
-        return -ENODEV;
-    }
-    
-    // Give the WiFi driver more time to initialize
-    LOG_INF("Waiting for WiFi driver to be ready...");
-    k_sleep(K_MSEC(2000));
-    
-    // Trigger a scan first to initialize the nRF7002 firmware download
-    LOG_INF("Triggering WiFi scan to initialize nRF7002 chip...");
-    int scan_ret = net_mgmt(NET_REQUEST_WIFI_SCAN, m_iface, NULL, 0);
-    if (scan_ret == 0) {
-        LOG_INF("Scan initiated successfully, waiting for scan to complete...");
-        k_sleep(K_MSEC(10000));  // Wait longer for scan to fully complete
-    } else {
-        LOG_WRN("Scan failed with %d, continuing anyway...", scan_ret);
-        k_sleep(K_MSEC(1000));
-    }
-    
-    // Request connection (firmware should now be loaded)
-    LOG_INF("Calling net_mgmt(NET_REQUEST_WIFI_CONNECT, ...)");
-    int ret = net_mgmt(NET_REQUEST_WIFI_CONNECT, m_iface, &params,
-                       sizeof(struct wifi_connect_req_params));
+    // Request connection using C wrapper to avoid C++ linkage issues
+    int ret = wifi_mgmt_connect(m_iface, &params);
     if (ret) {
         LOG_ERR("WiFi connection request failed: %d (%s)", ret, 
                 ret == -EPERM ? "EPERM" :

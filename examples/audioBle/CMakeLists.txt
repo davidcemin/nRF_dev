@@ -24,7 +24,7 @@ target_include_directories(app PRIVATE
 # Source files
 target_sources(app PRIVATE
     src/main.cpp
-    src/net/wifi_manager.cpp
+    src/net/wifi_mgr.c
     src/net/rtp_receiver.cpp
     src/cli/shell_commands.cpp
 )

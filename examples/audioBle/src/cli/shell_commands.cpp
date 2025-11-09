@@ -1,73 +1,54 @@
 #include "shell_commands.hpp"
+#include "../net/wifi_mgr.h"
 #include <zephyr/shell/shell.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/net/net_if.h>
-#include <zephyr/net/wifi_mgmt.h>
+#include <stdlib.h>
+#include <string.h>
 
 LOG_MODULE_REGISTER(shell_cmds, LOG_LEVEL_INF);
 
 // Global references to managers (set during init)
-static WiFiManager* g_wifi = nullptr;
 static RtpReceiver* g_rtp = nullptr;
 
-// WiFi connect command
-static int cmd_wifi_connect(const struct shell *sh, size_t argc, char **argv)
+// Connection status command (workaround for broken wifi status)
+static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
-    if (argc < 3) {
-        shell_error(sh, "Usage: wifi connect <ssid> <password>");
-        return -EINVAL;
-    }
-
-    if (!g_wifi) {
-        shell_error(sh, "WiFi manager not initialized");
-        return -ENODEV;
-    }
-
-    const std::string ssid = argv[1];
-    const std::string password = argv[2];
-
-    shell_print(sh, "Connecting to WiFi: %s", ssid.c_str());
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
     
-    int ret = g_wifi->connect(ssid, password);
-    if (ret < 0) {
-        shell_error(sh, "WiFi connection failed: %d", ret);
-        return ret;
-    }
-
-    shell_print(sh, "WiFi connected!");
-    shell_print(sh, "IP Address: %s", g_wifi->getIpAddress().c_str());
+    shell_print(sh, "=== Connection Status ===");
     
-    return 0;
-}
-
-// WiFi disconnect command
-static int cmd_wifi_disconnect(const struct shell *sh, size_t argc, char **argv)
-{
-    if (!g_wifi) {
-        shell_error(sh, "WiFi manager not initialized");
-        return -ENODEV;
-    }
-
-    g_wifi->disconnect();
-    shell_print(sh, "WiFi disconnected");
-    
-    return 0;
-}
-
-// WiFi status command
-static int cmd_wifi_status(const struct shell *sh, size_t argc, char **argv)
-{
-    if (!g_wifi) {
-        shell_error(sh, "WiFi manager not initialized");
-        return -ENODEV;
-    }
-
-    if (g_wifi->isConnected()) {
-        shell_print(sh, "WiFi Status: Connected");
-        shell_print(sh, "IP Address: %s", g_wifi->getIpAddress().c_str());
+    // Check actual network interface instead of wifi_mgr state
+    struct net_if *iface = net_if_get_default();
+    if (iface && net_if_is_up(iface)) {
+        // Check if we have an IPv4 address
+        bool has_ip = false;
+        char ip_str[NET_IPV4_ADDR_LEN];
+        
+        for (int i = 0; i < NET_IF_MAX_IPV4_ADDR; i++) {
+            struct net_if_addr_ipv4 *if_addr = &iface->config.ip.ipv4->unicast[i];
+            if (if_addr->ipv4.is_used) {
+                net_addr_ntop(AF_INET, &if_addr->ipv4.address.in_addr, ip_str, sizeof(ip_str));
+                shell_print(sh, "WiFi: Connected");
+                shell_print(sh, "IP Address: %s", ip_str);
+                has_ip = true;
+                break;
+            }
+        }
+        
+        if (!has_ip) {
+            shell_print(sh, "WiFi: Interface UP, waiting for IP...");
+        }
     } else {
-        shell_print(sh, "WiFi Status: Disconnected");
+        shell_print(sh, "WiFi: Not connected");
+    }
+    
+    if (g_rtp && g_rtp->isRunning()) {
+        shell_print(sh, "RTP: Running on port %u", g_rtp->getPort());
+    } else {
+        shell_print(sh, "RTP: Stopped");
     }
     
     return 0;
@@ -81,8 +62,24 @@ static int cmd_rtp_start(const struct shell *sh, size_t argc, char **argv)
         return -ENODEV;
     }
 
-    if (!g_wifi || !g_wifi->isConnected()) {
-        shell_error(sh, "WiFi must be connected first");
+    // Check if WiFi is connected by looking at network interface
+    struct net_if *iface = net_if_get_default();
+    bool has_ip = false;
+    char ip[NET_IPV4_ADDR_LEN] = {0};
+    
+    if (iface && net_if_is_up(iface)) {
+        for (int i = 0; i < NET_IF_MAX_IPV4_ADDR; i++) {
+            struct net_if_addr_ipv4 *if_addr = &iface->config.ip.ipv4->unicast[i];
+            if (if_addr->ipv4.is_used) {
+                net_addr_ntop(AF_INET, &if_addr->ipv4.address.in_addr, ip, sizeof(ip));
+                has_ip = true;
+                break;
+            }
+        }
+    }
+    
+    if (!has_ip) {
+        shell_error(sh, "WiFi must be connected first (no IP address)");
         return -ENOTCONN;
     }
 
@@ -105,13 +102,12 @@ static int cmd_rtp_start(const struct shell *sh, size_t argc, char **argv)
         shell_error(sh, "Failed to start RTP receiver: %d", ret);
         return ret;
     }
-
+    
     shell_print(sh, "RTP receiver started!");
-    shell_print(sh, "Listening on: %s:%u", g_wifi->getIpAddress().c_str(), port);
+    shell_print(sh, "Listening on: %s:%u", ip, port);
     shell_print(sh, "");
     shell_print(sh, "Stream audio with:");
-    shell_print(sh, "  python3 stream_audio.py song.mp3 %s %u", 
-                g_wifi->getIpAddress().c_str(), port);
+    shell_print(sh, "  python3 stream_audio.py song.mp3 %s %u", ip, port);
     
     return 0;
 }
@@ -147,9 +143,10 @@ static int cmd_rtp_status(const struct shell *sh, size_t argc, char **argv)
     if (g_rtp->isRunning()) {
         shell_print(sh, "RTP Receiver: Running");
         shell_print(sh, "Port: %u", g_rtp->getPort());
-        if (g_wifi && g_wifi->isConnected()) {
-            shell_print(sh, "Address: %s:%u", 
-                       g_wifi->getIpAddress().c_str(), g_rtp->getPort());
+        if (wifi_mgr_is_connected()) {
+            char ip[16];
+            wifi_mgr_get_ip(ip, sizeof(ip));
+            shell_print(sh, "Address: %s:%u", ip, g_rtp->getPort());
         }
     } else {
         shell_print(sh, "RTP Receiver: Stopped");
@@ -173,24 +170,20 @@ static int cmd_test_print(const struct shell *sh, size_t argc, char **argv)
     shell_print(sh, "CONFIG_WIFI_NRF70: DISABLED");
 #endif
 
+    // Check WiFi connection status
+    if (wifi_mgr_is_connected()) {
+        shell_print(sh, "WiFi: Connected");
+        char ip[16];
+        if (wifi_mgr_get_ip(ip, sizeof(ip)) == 0) {
+            shell_print(sh, "IP: %s", ip);
+        }
+    } else {
+        shell_print(sh, "WiFi: Not connected");
+    }
+
     shell_print(sh, "Test complete");
     return 0;
 }
-
-// Define WiFi subcommands
-SHELL_STATIC_SUBCMD_SET_CREATE(wifi_cmds,
-    SHELL_CMD_ARG(connect, NULL, 
-                  "Connect to WiFi network\n"
-                  "Usage: wifi connect <ssid> <password>", 
-                  cmd_wifi_connect, 3, 0),
-    SHELL_CMD_ARG(disconnect, NULL, 
-                  "Disconnect from WiFi", 
-                  cmd_wifi_disconnect, 1, 0),
-    SHELL_CMD_ARG(status, NULL, 
-                  "Show WiFi connection status", 
-                  cmd_wifi_status, 1, 0),
-    SHELL_SUBCMD_SET_END
-);
 
 // Define RTP subcommands
 SHELL_STATIC_SUBCMD_SET_CREATE(rtp_cmds,
@@ -208,14 +201,13 @@ SHELL_STATIC_SUBCMD_SET_CREATE(rtp_cmds,
     SHELL_SUBCMD_SET_END
 );
 
-// Register root commands
-SHELL_CMD_REGISTER(wifi, &wifi_cmds, "WiFi management commands", NULL);
+// Register root commands - only RTP and test (WiFi is provided by CONFIG_NET_L2_WIFI_SHELL)
 SHELL_CMD_REGISTER(rtp, &rtp_cmds, "RTP receiver commands", NULL);
+SHELL_CMD_REGISTER(status, NULL, "Show connection status", cmd_status);
 SHELL_CMD_REGISTER(test, NULL, "Test print output", cmd_test_print);
 
-void shell_init(WiFiManager& wifi, RtpReceiver& rtp)
+void shell_init(RtpReceiver& rtp)
 {
-    g_wifi = &wifi;
     g_rtp = &rtp;
     LOG_INF("Shell commands initialized");
 }
