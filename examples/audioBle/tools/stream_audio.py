@@ -77,23 +77,40 @@ class RtpServer:
         except:
             print("  Unable to determine IP address")
     
-    def wait_for_client(self, timeout=30):
-        """Wait for client to connect (send first packet)"""
-        print(f"Waiting up to {timeout}s for client to connect...")
-        self.socket.settimeout(timeout)
+    def wait_for_client(self):
+        """Wait for client to send hello packet"""
+        print("\nConnect your nRF device with:")
+        print("  uart:~$ wifi connect -s <ssid> -p <password> -k 1")
+        print(f"  uart:~$ rtp start {self._get_primary_ip()} {self.port}")
+        print(f"\nWaiting for client to connect (timeout 60s)...")
+        
+        self.socket.settimeout(60)
         
         try:
             # Wait for any packet from client
             data, addr = self.socket.recvfrom(1024)
             self.client_addr = addr
-            print(f"Client connected from {addr[0]}:{addr[1]}")
+            print(f"✓ Client connected from {addr[0]}:{addr[1]}")
             
             # Set socket back to non-blocking for streaming
-            self.socket.settimeout(None)
+            self.socket.settimeout(0.1)  # Small timeout for recv
             return True
         except socket.timeout:
-            print("Timeout waiting for client connection")
+            print("✗ Timeout - no client connected")
             return False
+    
+    def _get_primary_ip(self):
+        """Get the primary local IP address"""
+        import socket as sock
+        try:
+            # Create a socket to determine the primary IP
+            s = sock.socket(sock.AF_INET, sock.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "192.168.x.x"
         
     def create_rtp_header(self, marker=False):
         """Create RTP header (12 bytes)"""
@@ -154,13 +171,11 @@ class RtpServer:
         print(f"  Sample width: {audio.sample_width * 8} bits")
         print(f"  Duration: {len(audio) / 1000:.2f} seconds")
         
-        if not self.client_addr:
-            print("\nWaiting for client to connect...")
-            if not self.wait_for_client():
-                print("No client connected. Exiting.")
-                return
+        if not self.wait_for_client():
+            print("No client connected. Exiting.")
+            return
         
-        print(f"\nStreaming to client: {self.client_addr[0]}:{self.client_addr[1]}")
+        print(f"\n🎵 Streaming to client: {self.client_addr[0]}:{self.client_addr[1]}")
         print("Press Ctrl+C to stop\n")
         
         # Get raw audio data
