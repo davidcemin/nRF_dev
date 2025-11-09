@@ -1,6 +1,9 @@
 # WiFi RTP/UDP Receiver for nRF7002-DK
 cmake_minimum_required(VERSION 3.20.0)
 
+# Explicitly add nRF7002 WiFi configuration
+set(CONF_FILE "prj.conf;nrf7002.conf")
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(wifi_rtp_receiver LANGUAGES CXX)
 

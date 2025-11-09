@@ -1,6 +1,9 @@
 #include "shell_commands.hpp"
 #include <zephyr/shell/shell.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/printk.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/wifi_mgmt.h>
 
 LOG_MODULE_REGISTER(shell_cmds, LOG_LEVEL_INF);
 
@@ -155,6 +158,25 @@ static int cmd_rtp_status(const struct shell *sh, size_t argc, char **argv)
     return 0;
 }
 
+// Debug/test command
+static int cmd_test_print(const struct shell *sh, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+
+    shell_print(sh, "=== Test Build Info ===");
+    shell_print(sh, "Build: %s %s", __DATE__, __TIME__);
+    
+#ifdef CONFIG_WIFI_NRF70
+    shell_print(sh, "CONFIG_WIFI_NRF70: ENABLED");
+#else
+    shell_print(sh, "CONFIG_WIFI_NRF70: DISABLED");
+#endif
+
+    shell_print(sh, "Test complete");
+    return 0;
+}
+
 // Define WiFi subcommands
 SHELL_STATIC_SUBCMD_SET_CREATE(wifi_cmds,
     SHELL_CMD_ARG(connect, NULL, 
@@ -189,6 +211,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(rtp_cmds,
 // Register root commands
 SHELL_CMD_REGISTER(wifi, &wifi_cmds, "WiFi management commands", NULL);
 SHELL_CMD_REGISTER(rtp, &rtp_cmds, "RTP receiver commands", NULL);
+SHELL_CMD_REGISTER(test, NULL, "Test print output", cmd_test_print);
 
 void shell_init(WiFiManager& wifi, RtpReceiver& rtp)
 {
