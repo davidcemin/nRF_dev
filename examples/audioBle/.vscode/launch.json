@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "nRF Connect: Debug",
+      "name": "nRF Connect: Debug audioBle",
       "type": "cortex-debug",
       "request": "launch",
       "servertype": "jlink",
@@ -10,10 +10,8 @@
       "interface": "swd",
       "runToEntryPoint": "main",
       "cwd": "${workspaceRoot}",
-      "executable": "${workspaceFolder}/build/peripheral_hr/zephyr/zephyr.elf",
+      "executable": "${workspaceFolder}/build/audioBle/zephyr/zephyr.elf",
       "svdFile": "/opt/nordic/ncs/v2.9.2/modules/hal/nordic/nrfx/mdk/nrf5340_application.svd"
-
-
     }
   ]
 }

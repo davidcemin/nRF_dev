@@ -2,6 +2,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/net/net_event.h>
+#include <zephyr/net/net_if.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/posix/arpa/inet.h>
 #include <cstring>
@@ -52,11 +53,29 @@ int WiFiManager::connect(const std::string& ssid, const std::string& password)
     m_ssid = ssid;
     m_password = password;
     
+    // Wait for network interface to be available
     m_iface = net_if_get_default();
+    int retry = 0;
+    while (!m_iface && retry < 10) {
+        LOG_WRN("Waiting for network interface... (attempt %d)", retry + 1);
+        k_sleep(K_MSEC(500));
+        m_iface = net_if_get_default();
+        retry++;
+    }
+    
     if (!m_iface) {
-        LOG_ERR("No default network interface found");
+        LOG_ERR("No default network interface found after %d attempts", retry);
         return -ENODEV;
     }
+
+    // Bring up the network interface if it's not already up
+    if (!net_if_is_up(m_iface)) {
+        LOG_INF("Bringing up network interface...");
+        net_if_up(m_iface);
+        k_sleep(K_MSEC(100));
+    }
+
+    LOG_INF("Network interface ready");
 
     // Setup event callbacks (only once)
     static bool callbacks_initialized = false;
