@@ -89,8 +89,9 @@ class RtpServer:
         try:
             # Wait for any packet from client
             data, addr = self.socket.recvfrom(1024)
-            self.client_addr = addr
+            self.client_addr = addr  # Use the address client is bound to (should be port 5004)
             print(f"✓ Client connected from {addr[0]}:{addr[1]}")
+            print(f"  Received: {len(data)} bytes - {data[:30]}")
             
             # Set socket back to non-blocking for streaming
             self.socket.settimeout(0.1)  # Small timeout for recv
@@ -137,12 +138,18 @@ class RtpServer:
     def send_rtp_packet(self, audio_data, marker=False):
         """Send one RTP packet to connected client"""
         if not self.client_addr:
+            print("WARNING: No client address set!")
             return
             
         header = self.create_rtp_header(marker)
         packet = header + audio_data
         
-        self.socket.sendto(packet, self.client_addr)
+        try:
+            sent = self.socket.sendto(packet, self.client_addr)
+            if marker:
+                print(f"DEBUG: Sent first packet ({sent} bytes) to {self.client_addr}")
+        except Exception as e:
+            print(f"ERROR sending packet: {e}")
         
         # Update sequence number (wraps at 65535)
         self.sequence_number = (self.sequence_number + 1) & 0xFFFF
@@ -160,8 +167,8 @@ class RtpServer:
         # Load and convert audio
         audio = AudioSegment.from_file(audio_file)
         
-        # Convert to target format
-        audio = audio.set_frame_rate(self.sample_rate)
+        # Convert to target format - use 16kHz to reduce packet size
+        audio = audio.set_frame_rate(16000)  # Lower sample rate = smaller packets
         audio = audio.set_channels(1)  # Mono
         audio = audio.set_sample_width(2)  # 16-bit
         
@@ -181,10 +188,16 @@ class RtpServer:
         # Get raw audio data
         raw_data = audio.raw_data
         
-        # Calculate chunk size in bytes
+        # Calculate chunk size in bytes - use actual sample rate from audio
         bytes_per_sample = audio.sample_width * audio.channels
-        samples_per_chunk = int((self.sample_rate * chunk_duration_ms) / 1000)
+        samples_per_chunk = int((audio.frame_rate * chunk_duration_ms) / 1000)
         chunk_size = samples_per_chunk * bytes_per_sample
+        
+        # Limit chunk size to avoid IP fragmentation (MTU ~1500, leave room for headers)
+        max_chunk_size = 1200  # Safe size to avoid fragmentation
+        if chunk_size > max_chunk_size:
+            chunk_size = max_chunk_size
+            samples_per_chunk = chunk_size // bytes_per_sample
         
         # Timestamp increment per packet
         timestamp_increment = samples_per_chunk
