@@ -1,0 +1,9 @@
+{
+  "nrf-connect.toolchain.path": "/opt/nordic/ncs/v2.9.2",
+  "nrf-connect.toolchain": "v2.9.2",
+  "cortex-debug.gdbPath": "/opt/nordic/ncs/toolchains/b8efef2ad5/opt/zephyr-sdk/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb",
+  "files.associations": {
+    "Kconfig*": "ignore",
+    "functional": "cpp"
+  }
+}
